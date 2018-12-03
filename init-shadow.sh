@@ -1,9 +1,9 @@
 #!/bin/bash
 
 apt update && apt upgrade -y && apt autoremove -y
-apt install iptables-persistent
-apt install fail2ban dos2unix git libsodium-dev default-jre
-apt install linux-generic-hwe-16.04
+apt install -y iptables-persistent
+apt install -y fail2ban dos2unix git libsodium-dev default-jre
+apt install -y linux-generic-hwe-16.04
 
 echo "tcp_bbr" | tee -a /etc/modules-load.d/modules.conf
 echo "net.core.default_qdisc = fq" | tee -a /etc/sysctl.conf
