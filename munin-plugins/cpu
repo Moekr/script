@@ -111,7 +111,8 @@ if [ "$1" = "autoconf" ]; then
 	fi
 fi
 
-HZ=${HZ:-100}
+NCPU=$(grep -E '^cpu[0-9]+ ' /proc/stat | wc -l)
+HZ=$((${HZ:-100} * $NCPU))
 scaleto100=${scaleto100:-yes}
 
 extinfo=""
