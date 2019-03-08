@@ -1,0 +1,60 @@
+#!/bin/sh
+
+: << =cut
+
+=head1 NAME
+
+load - Script to monitor load average
+
+=head1 CONFIGURATION
+
+No configuration
+
+=head1 AUTHOR
+
+Unknown author
+
+=head1 LICENSE
+
+GPLv2
+
+=head1 NOTES
+
+=head2 DESCRIPTION
+
+This will report back the 5-minute average load of the system.
+It uses /usr/bin/uptime, /usr/bin/printf, /usr/bin/sed, /usr/bin/awk.
+
+=head2 RESCTRICTIONS
+
+None, unless you have restricted who can use /usr/bin/uptime.
+
+=head1 MAGIC MARKERS
+
+ #%# family=contrib
+ #%# capabilities=autoconf
+
+=cut
+
+if [ "$1" = "autoconf" ]; then
+        echo yes
+        exit 0
+fi
+
+if [ "$1" = "config" ]; then
+        echo 'graph_title Load average'
+        echo 'graph_args --base 1000 -l 0'
+        echo 'graph_vlabel load'
+        echo 'graph_scale no'
+        echo 'graph_category system'
+        echo 'graph_info The load average of the machine describes how many processes are in the run-queue (scheduled to run "immediately").'
+        echo 'graph_order load1 load5 load15'
+        echo 'load1.label 1-min load'
+        echo 'load5.label 5-min load'
+        echo 'load15.label 15-min load'
+        exit 0
+fi
+
+echo 'load1.value' $(/usr/bin/uptime | /bin/sed 's/.*average: //;s/,//g' | /usr/bin/awk '{ print $1 }')
+echo 'load5.value' $(/usr/bin/uptime | /bin/sed 's/.*average: //;s/,//g' | /usr/bin/awk '{ print $2 }')
+echo 'load15.value' $(/usr/bin/uptime | /bin/sed 's/.*average: //;s/,//g' | /usr/bin/awk '{ print $3 }')
