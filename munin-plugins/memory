@@ -1,0 +1,251 @@
+#!/usr/bin/perl -w
+
+use strict;
+use warnings;
+
+=head1 NAME
+
+memory - Plugin to monitor memory usage
+
+=head1 CONFIGURATION
+
+No configuration
+
+=head2 Warning and Critical Values
+
+Warning and critical values can be passed in environment variables as byte
+values or they can be percentages using a % sign and the value will be
+calculated dynamically by the plugin. Thus, to warn on swap at 50% the
+configuration is:
+
+	[memory]
+	env.swap_warning 50%
+
+Note that swap is calculated against the total swap amount (SwapTotal), and all
+other fields are calculated against the total amount of memory (MemTotal).
+
+
+=head1 AUTHORS
+
+Original Author: Jimmy Olsen
+
+=head2 CONTRIBUTORS
+
+=over 4
+
+=item Mike Fedyk
+
+Slab, SwapCached, PageTables, VmallocUsed, Mapped, Active, Inactive,
+2.4 Rmap & 2.6
+
+=item Juha-Matti Tapio
+
+Input on swap_cache and VMalloc Used on 64 bit machines.
+
+=item Nicolai Langfeldt
+
+Editor
+
+=back
+
+=head1 LICENSE
+
+GPLv2
+
+=head1 MAGIC MARKERS
+
+ #%# family=auto
+ #%# capabilities=autoconf
+
+=cut
+
+use Munin::Plugin;
+
+if ($ARGV[0] and $ARGV[0] eq "autoconf") {
+    if (-r "/proc/meminfo") {
+	print "yes\n";
+	exit 0;
+    } else {
+	print "no (/proc/meminfo not found)\n";
+	exit 0;
+    }
+}
+
+my %mems;
+&fetch_meminfo;
+
+if ($ARGV[0] and $ARGV[0] eq "config") {
+    print "graph_args --base 1024 -l 0 --upper-limit ",$mems{'MemTotal'},"\n";
+    print "graph_vlabel Bytes\n";
+    print "graph_title Memory usage\n";
+    print "graph_category system\n";
+    print "graph_info This graph shows what the machine uses memory for.\n";
+
+    print "graph_order ";
+    print "apps buffers cached ";
+    print "slab " if exists $mems{'Slab'};
+    print "swap_cache " if exists $mems{'SwapCached'};
+    print "page_tables " if exists $mems{'PageTables'};
+    print "shmem " if exists $mems{'Shmem'};
+    print "free swap\n";
+
+    print "apps.label apps\n";
+    print "apps.draw AREA\n";
+    print "apps.info Memory used by user-space applications.\n";
+    print "apps.colour COLOUR0\n";
+
+    print "buffers.label buffers\n";
+    print "buffers.draw STACK\n";
+    print "buffers.info Block device (e.g. harddisk) cache. ",
+      "Also where \"dirty\" blocks are stored until written.\n";
+    print "buffers.colour COLOUR5\n";
+
+    print "cached.label cache\n";
+    print "cached.draw STACK\n";
+    print "cached.info Parked file data (file content) cache.\n";
+    print "cached.colour COLOUR4\n";
+
+    if (exists $mems{'Slab'}) {
+	print "slab.label slab\n";
+	print "slab.draw STACK\n";
+	print "slab.info Memory used by the kernel (major users ",
+	  " are caches like inode, dentry, etc).\n";
+	print "slab.colour COLOUR3\n";
+    }
+
+    if (exists $mems{'SwapCached'}) {
+	print "swap_cache.label swap_cache\n";
+	print "swap_cache.draw STACK\n";
+	print "swap_cache.info A piece of memory that keeps track of pages ",
+	  "that have been fetched from swap but not yet been modified.\n";
+	print "swap_cache.colour COLOUR2\n";
+    }
+
+    if (exists $mems{'PageTables'}) {
+	print "page_tables.label page_tables\n";
+	print "page_tables.draw STACK\n";
+	print "page_tables.info Memory used to map between virtual and ",
+	  "physical memory addresses.\n";
+	print "page_tables.colour COLOUR1\n";
+    }
+
+    if (exists $mems{'Shmem'}) {
+	print "shmem.label shmem\n";
+	print "shmem.draw STACK\n";
+	print "shmem.info Shared Memory (SYSV SHM segments, tmpfs).\n";
+	print "shmem.colour COLOUR9\n";
+    }
+
+    print "free.label unused\n";
+    print "free.draw STACK\n";
+    print "free.info Wasted memory. Memory that is not ",
+      "used for anything at all.\n";
+    print "free.colour COLOUR6\n";
+
+    print "swap.label swap\n";
+    print "swap.draw LINE2\n";
+    print "swap.info Swap space used.\n";
+    # Fixed color for swap: red. Otherwise the above conditional fields could
+    # lead to color shifts due to changes of the kernel or other environment
+    # situations.
+    print "swap.colour COLOUR7\n";
+
+    for my $field (qw(apps buffers swap cached free slab swap_cache page_tables shmem)) {
+    	my ($warning, $critical) = get_thresholds($field);
+	my $total = $mems{MemTotal};
+	$total = $mems{SwapTotal} if($field eq "swap");
+
+	$warning = adjust_threshold($warning, $total);
+	$critical = adjust_threshold($critical, $total);
+
+	print "$field.warning $warning\n" if defined $warning;
+	print "$field.critical $critical\n" if defined $critical;
+    }
+    exit 0;
+}
+
+# Any optional value needs to be initialized to zero if it's used in a calculation below
+# and is has not been set by &fetch_meminfo
+
+if (exists $mems{'Slab'}) {
+    print "slab.value ", $mems{'Slab'}, "\n";
+} else {
+    $mems{'Slab'} = 0;
+}
+
+if (exists $mems{'SwapCached'}) {
+    print "swap_cache.value ", $mems{'SwapCached'}, "\n";
+} else {
+    $mems{'SwapCached'} = 0;
+}
+
+if (exists $mems{'PageTables'}) {
+    print "page_tables.value ", $mems{'PageTables'}, "\n";
+} else {
+    $mems{'PageTables'} = 0;
+}
+
+# Having default values for mandatory fields, even when they are not on the system
+$mems{'MemFree'} ||= 0;
+$mems{'Buffers'} ||= 0;
+$mems{'Cached'} ||= 0;
+$mems{'Slab'} ||= 0;
+$mems{'PageTables'} ||= 0;
+$mems{'SwapCached'} ||= 0;
+$mems{'SwapFree'} ||= 0;
+$mems{'SwapTotal'} ||= 0;
+
+print "apps.value ", $mems{'MemTotal'}
+	-$mems{'MemFree'}
+	-$mems{'Buffers'}
+	-$mems{'Cached'}
+	-$mems{'Slab'}
+	-$mems{'PageTables'}
+        -$mems{'SwapCached'}
+	,"\n";
+
+print "free.value ", $mems{'MemFree'}, "\n";
+print "buffers.value ", $mems{'Buffers'}, "\n";
+print "cached.value ", $mems{'Cached'} - (defined($mems{'Shmem'}) ? $mems{'Shmem'} : 0), "\n";
+print "swap.value ", $mems{'SwapTotal'} - $mems{'SwapFree'}, "\n";
+
+print "shmem.value ", $mems{'Shmem'}, "\n"
+  if exists $mems{'Shmem'};
+
+exit 0;
+
+sub fetch_meminfo {
+    open (IN, "/proc/meminfo") ||
+      die "Could not open /proc/meminfo for reading: $!";
+    while (<IN>) {
+	if (/^(\w+):\s*(\d+)\s+kb/i) {
+	    $mems{"$1"} = $2 * 1024;
+	}
+    }
+    close (IN);
+
+    # Only 2.6 and above has slab reported in meminfo, so read
+    # slabinfo if it isn't in meminfo
+    if (!$mems{Slab}) {
+	&fetch_slabinfo;
+    }
+}
+
+sub fetch_slabinfo {
+    # In 2.0 there is no slabinfo file, so return if the file doesn't open
+    open (IN, "/proc/slabinfo") || return;
+    my @slabinfo;
+    my $tot_slab_pages = 0;
+    my $slab_version = <IN>;
+    if ($slab_version =~ /^slabinfo - version: 1.1/) {
+	while (<IN>) {
+	    if (!/^slabinfo/) {
+		@slabinfo = split;
+		$tot_slab_pages += $slabinfo[5];
+	    }
+	}
+    }
+    close (IN);
+
+    $mems{'Slab'} = $tot_slab_pages * 4096 if $tot_slab_pages gt 0;
+}
