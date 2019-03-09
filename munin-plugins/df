@@ -1,0 +1,69 @@
+#!/bin/sh
+
+set -e
+
+: << =cut
+=head1 NAME
+df - Script to monitor disk usage
+=head1 CONFIGURATION
+The following environment variables are used by this plugin:
+ warning  - Warning percentage (Default: 92)
+ critical - Critical percentage (Default: 98)
+=head1 MAGIC MARKERS
+ #%# family=auto
+ #%# capabilities=autoconf
+=cut
+
+# shellcheck disable=SC1090
+. "$MUNIN_LIBDIR/plugins/plugin.sh"
+
+
+df_entries=$(df -P -l 2>/dev/null | sed -e '1d' -e '/\/\//d' -e 's/%//' | grep -v docker | sort)
+
+
+# Use the mountpoint instead of the device name for ambiguous virtual devices (tmpfs, ...).
+get_unique_fieldname() {
+    # do not use "local" - we want to be as portable, as possible
+    this_device="$1"
+    this_mountpoint="$2"
+    case "$this_device" in
+        tmpfs|none|udev|simfs)
+            clean_fieldname "$this_mountpoint"
+            ;;
+        *)
+            clean_fieldname "$this_device"
+            ;;
+    esac
+}
+
+
+if [ "$1" = "autoconf" ]; then
+    if [ -z "$df_entries" ] ; then
+        echo "no (no mounted filesystems found)"
+    else
+        echo yes
+    fi
+    exit 0
+fi
+
+if [ "$1" = "config" ]; then
+    echo 'graph_title Disk usage in percent'
+    echo 'graph_args --upper-limit 100 -l 0'
+    echo 'graph_vlabel %'
+    echo 'graph_category disk'
+    echo 'graph_scale no'
+    echo "$df_entries" | while read -r dev size used free pct fs; do
+        name=$(get_unique_fieldname "$dev" "$fs")
+        echo "$name.label $fs"
+        print_warning "$name"
+        print_critical "$name"
+    done
+    # exit now if the capability DIRTYCONFIG is missing or disabled
+    if [ "${MUNIN_CAP_DIRTYCONFIG:-0}" != 1 ]; then exit 0; fi
+fi
+
+# output current values
+# shellcheck disable=SC2034
+echo "$df_entries" | while read -r dev size used free pct fs; do
+     echo "$(get_unique_fieldname "$dev" "$fs").value $pct"
+done
